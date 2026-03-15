@@ -116,30 +116,46 @@ def build_real_rate_differential():
 def build_current_account_differential():
     """
     Factor 2: Current Account Differential
-    
-    US current account from FRED minus Japan current account from Bloomberg.
-    Both normalized by computing YoY percentage change to make them comparable
-    regardless of currency or scale differences.
+
+    Instead of YoY percentage change (which explodes when values cross zero),
+    we use a rolling Z-score of the level difference between US and Japan
+    current accounts. This captures whether the US current account is
+    improving or deteriorating relative to Japan in a stable, normalized way.
+
+    Z-score = (value - rolling_mean) / rolling_std
+    Window of 36 months captures medium-term trend without being too slow.
     """
     bloomberg_monthly = load_bloomberg_monthly()
     us_ca = load_raw("us_current_acct.csv")
     japan_ca = bloomberg_monthly["japan_current_acct"]
-    
-    # Compute YoY change for both
-    us_ca_yoy = us_ca.resample("MS").ffill().pct_change(12) * 100
-    jp_ca_yoy = japan_ca.pct_change(12) * 100
-    
-    # Differential — positive means US current account improving relative to Japan
-    combined = pd.concat([us_ca_yoy, jp_ca_yoy], axis=1)
-    combined.columns = ["us_ca_yoy", "jp_ca_yoy"]
+
+    # Resample US current account to monthly
+    us_ca_monthly = us_ca.resample("MS").ffill()
+
+    # Align both series
+    combined = pd.concat([us_ca_monthly, japan_ca], axis=1)
+    combined.columns = ["us_ca", "jp_ca"]
     combined = combined.ffill().dropna()
-    
-    combined["ca_diff"] = combined["us_ca_yoy"] - combined["jp_ca_yoy"]
-    
+
+    # Normalize Japan CA to same scale as US (convert JPY billions to USD billions)
+    # Use approximate exchange rate of 110 as long-run average for normalization
+    combined["jp_ca_usd"] = combined["jp_ca"] / 110
+
+    # Compute the level difference
+    combined["ca_diff"] = combined["us_ca"] - combined["jp_ca_usd"]
+
+    # Rolling Z-score over 36 months to normalize
+    window = 36
+    rolling_mean = combined["ca_diff"].rolling(window).mean()
+    rolling_std = combined["ca_diff"].rolling(window).std()
+    combined["ca_zscore"] = (combined["ca_diff"] - rolling_mean) / rolling_std
+
+    combined = combined.dropna()
+
     print(f"Current account differential built: {len(combined)} monthly observations")
     print(f"Range: {combined.index.min().date()} to {combined.index.max().date()}")
-    
-    return combined["ca_diff"]
+
+    return combined["ca_zscore"]
 
 
 def build_fundamental_momentum(real_rate_diff, lookback=3):
