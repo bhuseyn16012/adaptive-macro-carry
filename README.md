@@ -105,10 +105,3 @@ python main.py
 ## Author
 
 MQE Team ECON 409
-```
-
-Copy that in, then:
-```
-git add README.md
-git commit -m "Add project README with results and methodology"
-git push origin main
